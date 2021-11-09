@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title>three.js webgl - loaders - MMD loader</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link type="text/css" rel="stylesheet" href="main.css">
+	<style>
+		body {
+			background-color: #fff;
+			color: #444;
+		}
+
+		a {
+			color: #08f;
+		}
+	</style>
+</head>
+
+<body>
+	<div id="info"></div>
+
+	<script src="js/libs/ammo.wasm.js"></script>
+	<script src="scoreoutputer.min.js"></script>
+	<script src="https://cdn.bootcss.com/FileSaver.js/2014-11-29/FileSaver.js"></script>
+	<script>
+		// 建構子 ScoreOutputer 接受一個字串，該字串為 csv 的檔案名稱
+		// 以下面範例，檔名就為 "109598105(總分: 6).csv"
+		var so = new ScoreOutputer("110598403");
+		so.installCSS(function () {
+			// 安裝 bootstrap 的 css，如果在 html 上方引用 bootstrap 5.1.1 的話就不用使用 installCSS ，注意一定要 bootstrap css 5.1.1 版
+			// installCSS 接收一個 callback 當作參數，作為成功安裝 bootstrap css 的回呼函式
+
+			//加入項目，分數，完成狀況
+			//第一個參數為 項目名稱
+			//第2個參數為 項目分數
+			//第3個參數為 完成狀況，有完成 true/未完成 false
+			//有幾個項目就呼叫幾個 addChild
+			//addChild 要比 renderModal 先呼叫
+			so.addChild("繪製出 5 個畫面", 1, true);
+			so.addChild("回答問題", 1, true);
+			so.addChild("可按鍵選擇上 / 下一隻角色", 1, true);
+			so.addChild("讀取作業 2 儲存的座標點在眼睛上繪製出分割線", 1, true);
+			so.addChild("可選擇當下控制哪個虹膜", 1, true);
+			so.addChild("按滑鼠左鍵控制虹膜移動，右鍵停止", 2, true);
+			so.addChild("複製參數至對應目標參數", 2, true);
+			so.addChild("可儲存虹膜轉動角度", 1, true);
+
+			//產生自評表，參數如下所示
+			so.renderModal(
+				//1. 自評表插入位置 (預設 document.body)
+				document.body,
+				//2. 自評表背景 (預設紅色)
+				'rgba(100,45,58,1)',
+				//3. 自評表文字顏色 (預設白色)
+				'white',
+				//4. 自評表文字大小 (預設 14pt)
+				'15pt',
+				//5. 自評表 checkbox 文字大小 (預設多少忘了)
+				'15px',
+				//6. 自評表標題 (預設 "自我評分表")
+				dialogTitle = "自我評分表"
+			);
+
+			//設定下載按鈕 <-- 一定要呼叫這個函數，不然沒有下載功能
+			so.installDownloadBtn();
+
+			//產生 "開啟自評表按鈕"
+			so.renderBtn(
+				//自評表按鈕插入位置
+				document.querySelector("#info"),
+				//自評表按鈕文字
+				"開啟自評表"
+			);
+		});
+	</script>
+
+	<script type="module">
+
+		import * as THREE from './build/three.module.js';
+		import { GUI } from './jsm/libs/dat.gui.module.js';
+		import { OrbitControls } from './jsm/controls/OrbitControls.js';
+		import { OutlineEffect } from './jsm/effects/OutlineEffect.js';
+		import { MMDLoader } from './jsm/loaders/MMDLoader.js';
+		import { MMDAnimationHelper } from './jsm/animation/MMDAnimationHelper.js';
+
+		let scene, renderer, effect, testrenderer;
+		let mesh, helper;
+		let SCREEN_WIDTH = window.innerWidth;
+		let SCREEN_HEIGHT = window.innerHeight;
+		let aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+		let frustumSize = 30;
+		let camera, camera2, camera3, camera4, camera5;
+
+		let mouseDownX = 0;//按下滑鼠時的位置
+		let mouseDownY = 0;
+		let mouseDownFlag = 0;
+		let wx = 0;
+		let wy = 0;
+
+		let modellist = [];//存角色
+		let modelNum = 0;//算當前是顯示哪隻角色，默認為0，即第一只
+
+		let modelFile = 'models/mmd/kizunaai/kizunaai.pmx';//默認角色
+		//let modelFile = 'models/mmd/るいのれ式物述有栖_配布用フォルダ/物述有栖.pmx';//默認角色
+		//let modelFile = 'models/mmd/『天宮こころ(Kokoro Amamiya)』/『天宮こころ(Kokoro Amamiya)』.pmx';//默認角色
+
+		let group = new THREE.Group();
+		let lineGroup = new THREE.Group();
+
+		let modelEye = [[86, 88], [11, 13], [49, 51]];
+		let modelAngle = [[0.14, 0.14, -0.2, -0.2, 0.22, 0.15, -0.14, -0.22],
+		[0.25, 0.25, -0.28, -0.28, 0.36, 0.17, -0.17, -0.36],
+		[0.32, 0.32, -0.24, -0.24, 0.28, 0.19, -0.19, -0.28]];
+
+		let eyestatus = 1;
+
+		const mmdFiles = [
+			'models/mmd/kizunaai/kizunaai.pmx',
+			'models/mmd/るいのれ式物述有栖_配布用フォルダ/物述有栖.pmx',
+			'models/mmd/『天宮こころ(Kokoro Amamiya)』/『天宮こころ(Kokoro Amamiya)』.pmx'
+		];
+
+		document.addEventListener("keydown", keydown);//綁定鍵盤點擊事件
+		document.addEventListener("keypress", keypress);//綁定鍵盤點擊事件
+		window.addEventListener('resize', onWindowResize);
+		document.addEventListener("mousemove", mousemove, false);
+		document.addEventListener("mousedown", mousedown);
+
+		Ammo().then(function (AmmoLib) {
+
+			Ammo = AmmoLib;
+			init();
+			animate();
+
+		});
+
+		function readTextFile(file, callback) {
+			var rawFile = new XMLHttpRequest();
+			rawFile.overrideMimeType("application/json");
+			rawFile.open("GET", file, true);
+			rawFile.onreadystatechange = function () {
+				if (rawFile.readyState === 4 && rawFile.status == "200") {
+					callback(rawFile.responseText);
+				}
+			}
+			rawFile.send(null);
+		}
+
+		//usage:
+		readTextFile("./model_point.json", function (text) {
+			var data = JSON.parse(text);
+			modellist = data;
+			for (var key in modellist) {
+				console.log(modellist[key][modelNum]['line_locationx_1'])
+			}
+
+		});
+
+		function drawline(model_data) {
+
+			let material;
+			material = new THREE.LineBasicMaterial({ color: 0xFFFFFF });
+
+			let material2 = new THREE.LineBasicMaterial({ color: 0x00FF00 });//綠色
+			let material3 = new THREE.LineBasicMaterial({ color: 0xff0000 });//紅色
+
+			const points1 = [];//左眼下
+			const points2 = [];//左眼左
+			const points3 = [];//左眼上
+			const points4 = [];//左眼右
+			const points5 = [];//
+			const points6 = [];
+			const points7 = [];
+			const points8 = [];
+
+			const hori1 = [];
+			const hori2 = [];
+			const hori3 = [];
+
+			const ver1 = [];
+			const ver2 = [];
+			const ver3 = [];
+			const ver4 = [];
+			const ver5 = [];
+			const ver6 = [];
+			const ver7 = [];
+
+			for (var key in modellist) {
+
+				if (eyestatus % 2 != 0) {
+					//水平線距離
+					let h1 = model_data[key][modelNum]['line_locationy_3'];
+					let h2 = model_data[key][modelNum]['line_locationy_1'];
+					let horidistance = (h1 - h2) / 4;
+
+					//垂直線距離
+					let v1 = model_data[key][modelNum]['line_locationx_4'];
+					let v2 = model_data[key][modelNum]['line_locationx_2'];
+					let verdistance = (v1 - v2) / 8;
+
+					//下
+					points1.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_1'] + 0.5,
+						model_data[key][modelNum]['line_locationy_1'], 2));
+					points1.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_1'] - 10,
+						model_data[key][modelNum]['line_locationy_1'], 2));
+
+					//上
+					points3.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] + 0.5,
+						model_data[key][modelNum]['line_locationy_3'], 2));
+					points3.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] - 10,
+						model_data[key][modelNum]['line_locationy_3'], 2));
+
+					//水平線一
+					hori1.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] + 0.5,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 1, 2));
+					hori1.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] - 10,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 1, 2));
+
+					//水平線二
+					hori2.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] + 0.5,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 2, 2));
+					hori2.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] - 10,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 2, 2));
+
+					//水平線三
+					hori3.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] + 0.5,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 3, 2));
+					hori3.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_3'] - 10,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 3, 2));
+
+					//左
+					points2.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_2'],
+						model_data[key][modelNum]['line_locationy_2'] - 1, 2));
+					points2.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_2'],
+						model_data[key][modelNum]['line_locationy_2'] + 10, 2));
+
+					//右
+					points4.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'],
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					points4.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'],
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					//垂直線
+					ver1.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 1,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver1.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 1,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver2.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 2,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver2.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 2,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver3.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 3,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver3.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 3,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver4.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 4,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver4.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 4,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver5.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 5,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver5.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 5,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver6.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 6,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver6.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 6,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver7.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 7,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver7.push(new THREE.Vector3(-model_data[key][modelNum]['line_locationx_4'] + verdistance * 7,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+				} else if (eyestatus % 2 == 0) {
+					//水平線距離
+					let h1 = model_data[key][modelNum]['line_locationy_3'];
+					let h2 = model_data[key][modelNum]['line_locationy_1'];
+					let horidistance = (h1 - h2) / 4;
+
+					//垂直線距離
+					let v1 = model_data[key][modelNum]['line_locationx_4'];
+					let v2 = model_data[key][modelNum]['line_locationx_2'];
+					let verdistance = (v1 - v2) / 8;
+
+					//下
+					points1.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_1'] - 0.5,
+						model_data[key][modelNum]['line_locationy_1'], 2));
+					points1.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_1'] + 10,
+						model_data[key][modelNum]['line_locationy_1'], 2));
+
+					//上
+					points3.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] - 0.5,
+						model_data[key][modelNum]['line_locationy_3'], 2));
+					points3.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] + 10,
+						model_data[key][modelNum]['line_locationy_3'], 2));
+
+					//水平線一
+					hori1.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] - 0.5,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 1, 2));
+					hori1.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] + 10,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 1, 2));
+
+					//水平線二
+					hori2.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] - 0.5,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 2, 2));
+					hori2.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] + 10,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 2, 2));
+
+					//水平線三
+					hori3.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] - 0.5,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 3, 2));
+					hori3.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_3'] + 10,
+						model_data[key][modelNum]['line_locationy_3'] - horidistance * 3, 2));
+
+					//左
+					points2.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_2'],
+						model_data[key][modelNum]['line_locationy_2'] - 1, 2));
+					points2.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_2'],
+						model_data[key][modelNum]['line_locationy_2'] + 10, 2));
+
+					//右
+					points4.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'],
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					points4.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'],
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					//垂直線
+					ver1.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 1,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver1.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 1,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver2.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 2,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver2.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 2,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver3.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 3,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver3.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 3,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver4.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 4,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver4.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 4,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver5.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 5,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver5.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 5,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver6.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 6,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver6.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 6,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+
+					ver7.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 7,
+						model_data[key][modelNum]['line_locationy_3'] - 1, 2));
+					ver7.push(new THREE.Vector3(model_data[key][modelNum]['line_locationx_4'] - verdistance * 7,
+						model_data[key][modelNum]['line_locationy_3'] + 10, 2));
+				} else {
+					return;
+				}
+
+			}
+
+			const geometry1 = new THREE.BufferGeometry().setFromPoints(points1);
+			const line1 = new THREE.Line(geometry1, material2);
+			line1.name = "first";
+			scene.remove(scene.getObjectByName("first"));
+			scene.add(line1);
+
+			const geometry2 = new THREE.BufferGeometry().setFromPoints(points2);
+			const line2 = new THREE.Line(geometry2, material3);
+			line2.name = "sec";
+			scene.remove(scene.getObjectByName("sec"));
+			scene.add(line2);
+
+			const geometry3 = new THREE.BufferGeometry().setFromPoints(points3);
+			const line3 = new THREE.Line(geometry3, material2);
+			line3.name = "third";
+			scene.remove(scene.getObjectByName("third"));
+			scene.add(line3);
+
+			const geometry4 = new THREE.BufferGeometry().setFromPoints(points4);
+			const line4 = new THREE.Line(geometry4, material3);
+			line4.name = "fourth";
+			scene.remove(scene.getObjectByName("fourth"));
+			scene.add(line4);
+
+			const hori1geometry = new THREE.BufferGeometry().setFromPoints(hori1);
+			const hori1line = new THREE.Line(hori1geometry, material2);
+			hori1line.name = "hori1line";
+			scene.remove(scene.getObjectByName("hori1line"));
+			scene.add(hori1line);
+
+			const hori2geometry = new THREE.BufferGeometry().setFromPoints(hori2);
+			const hori2line = new THREE.Line(hori2geometry, material2);
+			hori2line.name = "hori2line";
+			scene.remove(scene.getObjectByName("hori2line"));
+			scene.add(hori2line);
+
+			const hori3geometry = new THREE.BufferGeometry().setFromPoints(hori3);
+			const hori3line = new THREE.Line(hori3geometry, material2);
+			hori3line.name = "hori3line";
+			scene.remove(scene.getObjectByName("hori3line"));
+			scene.add(hori3line);
+
+			const ver1geometry = new THREE.BufferGeometry().setFromPoints(ver1);
+			const ver1line = new THREE.Line(ver1geometry, material3);
+			ver1line.name = "ver1line";
+			scene.remove(scene.getObjectByName("ver1line"));
+			scene.add(ver1line);
+
+			const ver2geometry = new THREE.BufferGeometry().setFromPoints(ver2);
+			const ver2line = new THREE.Line(ver2geometry, material3);
+			ver2line.name = "ver2line";
+			scene.remove(scene.getObjectByName("ver2line"));
+			scene.add(ver2line);
+
+			const ver3geometry = new THREE.BufferGeometry().setFromPoints(ver3);
+			const ver3line = new THREE.Line(ver3geometry, material3);
+			ver3line.name = "ver3line";
+			scene.remove(scene.getObjectByName("ver3line"));
+			scene.add(ver3line);
+
+			const ver4geometry = new THREE.BufferGeometry().setFromPoints(ver4);
+			const ver4line = new THREE.Line(ver4geometry, material3);
+			ver4line.name = "ver4line";
+			scene.remove(scene.getObjectByName("ver4line"));
+			scene.add(ver4line);
+
+			const ver5geometry = new THREE.BufferGeometry().setFromPoints(ver5);
+			const ver5line = new THREE.Line(ver5geometry, material3);
+			ver5line.name = "ver5line";
+			scene.remove(scene.getObjectByName("ver5line"));
+			scene.add(ver5line);
+
+			const ver6geometry = new THREE.BufferGeometry().setFromPoints(ver6);
+			const ver6line = new THREE.Line(ver6geometry, material3);
+			ver6line.name = "ver6line";
+			scene.remove(scene.getObjectByName("ver6line"));
+			scene.add(ver6line);
+
+			const ver7geometry = new THREE.BufferGeometry().setFromPoints(ver7);
+			const ver7line = new THREE.Line(ver7geometry, material3);
+			ver7line.name = "ver7line";
+			scene.remove(scene.getObjectByName("ver7line"));
+			scene.add(ver7line);
+
+		}
+
+		function keypress(event) {
+
+		}
+
+		function mousedown(event) {
+			var id = event.target.id;
+
+			var i = document.getElementsByClassName("modal fade");
+			if (id != "info") {
+				if (event.button == 0) {
+					mouseDownX = wx;
+					mouseDownY = wy;
+					mouseDownFlag = 1;
+				} else if (event.button == 2) {
+					mouseDownX = 0;
+					mouseDownY = 0;
+					mouseDownFlag = 0;
+				} else {
+					return;
+				}
+			}
+
+		}
+
+		function keydown(event) {
+
+			switch (event.keyCode) {
+				case 65:           //按A
+					if (modelNum > 0) {
+						//更新角色號碼及文件位置
+						modelNum = modelNum - 1;
+						modelFile = mmdFiles[modelNum];
+						//linestatus = 9999;
+						var elem = document.getElementById("testdiv");
+						elem.remove(elem);
+
+						scene.remove(mesh);
+						eyestatus = 1;
+						//重新初始化
+						init();
+					}
+					return;
+				case 68:           //按D
+					if (modelNum < 2) {
+						modelNum = modelNum + 1;
+						modelFile = mmdFiles[modelNum];
+						var elem = document.getElementById("testdiv");
+						elem.remove(elem);
+						scene.remove(mesh);
+						scene.remove(scene.getObjectByName("first"));
+						eyestatus = 1;
+						init();
+					}
+					return;
+				case 97: case 49:
+					if (eyestatus < 8) {
+						eyestatus += 1;
+					}
+					return;
+				case 98: case 50:
+					if (eyestatus > 1) {
+						eyestatus -= 1;
+					}
+					return;
+				case 81://press Q
+					if (eyestatus == 1) {
+						modelAngle[modelNum][0] = modelAngle[modelNum][1];
+						eyestatus = 2;
+					}
+					if (eyestatus == 3) {
+						modelAngle[modelNum][2] = modelAngle[modelNum][3];
+						eyestatus = 4;
+					}
+					if (eyestatus == 5) {
+						modelAngle[modelNum][6] = -(modelAngle[modelNum][5]);
+						eyestatus = 8;
+					}
+					if (eyestatus == 6) {
+						modelAngle[modelNum][7] = -(modelAngle[modelNum][4]);
+						eyestatus = 7;
+					}
+					return;
+				case 83:// press S
+					let model = [];
+					var mdlist = {};
+
+					for (var i = 0; i < 3; i++) {
+						var md = {};
+						for (var j in modellist) {
+							md = {
+								"location": modellist[j][i]['location'],
+								"line_locationx_1": modellist[j][i]['line_locationx_1'],
+								"line_locationy_1": modellist[j][i]['line_locationy_1'],
+								"line_locationx_2": modellist[j][i]['line_locationx_2'],
+								"line_locationy_2": modellist[j][i]['line_locationy_2'],
+								"line_locationx_3": modellist[j][i]['line_locationx_3'],
+								"line_locationy_3": modellist[j][i]['line_locationy_3'],
+								"line_locationx_4": modellist[j][i]['line_locationx_4'],
+								"line_locationy_4": modellist[j][i]['line_locationy_4'],
+								"RXNA": modelAngle[modelNum][0],
+								"LXNA": modelAngle[modelNum][1],
+								"RXPA": modelAngle[modelNum][2],
+								"LXPA": modelAngle[modelNum][3],
+								"RYNA": modelAngle[modelNum][4],
+								"LYNA": modelAngle[modelNum][5],
+								"RYPA": modelAngle[modelNum][6],
+								"LYPA": modelAngle[modelNum][7]
+							}
+							model.push(md);
+						}
+
+					}
+					mdlist = { "modellist": model }
+					savefilejson(mdlist);
+					return;
+				default:
+					return;
+			}
+		}
+
+
+		function savefilejson(data) {
+			var content = JSON.stringify(data);
+			var blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+			saveAs(blob, "model.json");
+		}
+
+		function init() {
+
+			const container = document.createElement('div');
+			container.setAttribute('id', 'testdiv');
+			document.body.appendChild(container);
+
+			camera = new THREE.OrthographicCamera(0.25 * frustumSize * aspect / - 2,
+				0.25 * frustumSize * aspect / 2,
+				0.5 * frustumSize / 2,
+				0.5 * frustumSize / - 2, 0.1, 1000);
+
+			camera2 = new THREE.OrthographicCamera(0.25 * frustumSize * aspect / - 2, 0.25 * frustumSize * aspect / 2, 0.5 * frustumSize / 2, 0.5 * frustumSize / - 2, 0.1, 1000);
+			camera3 = new THREE.OrthographicCamera(0.25 * frustumSize * aspect / - 2, 0.25 * frustumSize * aspect / 2, 0.5 * frustumSize / 2, 0.5 * frustumSize / - 2, 0.1, 1000);
+			camera4 = new THREE.OrthographicCamera(0.25 * frustumSize * aspect / - 2, 0.25 * frustumSize * aspect / 2, 0.5 * frustumSize / 2, 0.5 * frustumSize / - 2, 0.1, 1000);
+			camera5 = new THREE.OrthographicCamera(0.25 * frustumSize * aspect / - 2, 0.25 * frustumSize * aspect / 2, 0.5 * frustumSize / 2, 0.5 * frustumSize / - 2, 0.1, 1000);
+
+			camera.position.z = 30;
+			camera2.position.z = 30;
+			camera3.position.z = 30;
+			camera4.position.z = 30;
+			camera5.position.z = 30;
+
+			// scene
+			scene = new THREE.Scene();
+
+			const ambient = new THREE.AmbientLight(0x666666);
+			scene.add(ambient);
+
+			const directionalLight = new THREE.DirectionalLight(0x887766);
+			directionalLight.position.set(-1, 1, 1).normalize();
+
+			scene.add(directionalLight);
+			scene.add(directionalLight.target)
+
+			renderer = new THREE.WebGLRenderer({ antialias: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+
+			container.appendChild(renderer.domElement);
+			renderer.autoClear = false;
+
+			effect = new OutlineEffect(renderer);
+
+			// model
+			function onProgress(xhr) {
+
+				if (xhr.lengthComputable) {
+
+					const percentComplete = xhr.loaded / xhr.total * 100;
+					console.log(Math.round(percentComplete, 2) + '% downloaded');
+
+				}
+			}
+
+			helper = new MMDAnimationHelper();
+
+			const loader = new MMDLoader();
+
+			loader.load(modelFile, function (object) {
+
+				mesh = object;
+				mesh.position.y = - 10;
+				scene.add(mesh);
+				scene.scale.set(5.5, 5.5, 5.5);
+
+				if (modelNum == 0) {
+					scene.translateY(-47);
+				} else if (modelNum == 1) {
+					scene.translateY(-27);
+				} else if (modelNum == 2) {
+					scene.translateY(-32);
+				} else {
+					return;
+				}
+
+			}, onProgress, null);
+
+			window.addEventListener('resize', onWindowResize);
+
+			//鏡頭控制
+			const cameracontrols = new OrbitControls(camera, renderer.domElement);
+			cameracontrols.minDistance = 10;
+			cameracontrols.maxDistance = 100;
+			cameracontrols.en
+			cameracontrols.enableDamping = true;
+
+			cameracontrols.enableRotate = false;//禁用攝像機旋轉
+
+			const cameracontrols2 = new OrbitControls(camera2, renderer.domElement);
+			cameracontrols2.minDistance = 10;
+			cameracontrols2.maxDistance = 100;
+			cameracontrols2.en
+			cameracontrols2.enableZoom = false;
+			cameracontrols2.enablePan = false;
+			cameracontrols2.enableRotate = false;//禁用攝像機旋轉
+
+			const cameracontrols3 = new OrbitControls(camera3, renderer.domElement);
+			cameracontrols3.minDistance = 10;
+			cameracontrols3.maxDistance = 100;
+			cameracontrols3.en
+			cameracontrols3.enableZoom = false;
+			cameracontrols3.enablePan = false;
+			cameracontrols3.enableRotate = false;//禁用攝像機旋轉
+
+			const cameracontrols4 = new OrbitControls(camera4, renderer.domElement);
+			cameracontrols4.minDistance = 10;
+			cameracontrols4.maxDistance = 100;
+			cameracontrols4.en
+			cameracontrols4.enableZoom = false;
+			cameracontrols4.enablePan = false;
+			cameracontrols4.enableRotate = false;//禁用攝像機旋轉
+
+			const cameracontrols5 = new OrbitControls(camera5, renderer.domElement);
+			cameracontrols5.minDistance = 10;
+			cameracontrols5.maxDistance = 100;
+			cameracontrols5.en
+			cameracontrols5.enableZoom = false;
+			cameracontrols5.enablePan = false;
+			cameracontrols5.enableRotate = false;//禁用攝像機旋轉
+
+		}
+
+
+
+		function mousemove(event) {
+
+			var mouseworld = new THREE.Vector3();
+
+			const { left, top, width, height } = event.target.getBoundingClientRect()
+
+			mouseworld.set(
+				((event.clientX - left + 1) / width) * 2 - 1,
+				-(event.clientY - top + 1) / height * 2 + 1,
+				(camera.near + camera.far) - (camera.near + camera.far),
+			);
+
+			mouseworld.unproject(camera);
+			wx = mouseworld.x;
+			wy = mouseworld.y;
+
+		}
+
+		function onWindowResize() {
+
+			SCREEN_WIDTH = window.innerWidth;
+			SCREEN_HEIGHT = window.innerHeight;
+			aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+
+			effect.setSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+
+			if (eyestatus % 2 == 0) {
+				camera.left = (0.25 * frustumSize * aspect / - 2) + 6;
+				camera.right = 0.25 * frustumSize * aspect / 2;
+			} else {
+				camera.right = 0.25 * frustumSize * aspect / 2 - 6;
+				camera.left = (0.25 * frustumSize * aspect / - 2);
+			}
+
+			camera.top = (0.5 * frustumSize / 2) - 2;
+			camera.bottom = -0.5 * frustumSize / 2;
+			camera.zoom = 2.5;
+			camera.updateProjectionMatrix();
+
+			camera2.left = 0.25 * frustumSize * aspect / - 2;
+			camera2.right = 0.25 * frustumSize * aspect / 2;
+			camera2.top = 0.5 * frustumSize / 2;
+			camera2.bottom = - 0.5 * frustumSize / 2;
+			camera2.updateProjectionMatrix();
+
+			camera3.left = 0.25 * frustumSize * aspect / - 2;
+			camera3.right = 0.25 * frustumSize * aspect / 2;
+			camera3.top = 0.5 * frustumSize / 2;
+			camera3.bottom = - 0.5 * frustumSize / 2;
+			camera3.updateProjectionMatrix();
+
+			camera4.left = 0.25 * frustumSize * aspect / - 2;
+			camera4.right = 0.25 * frustumSize * aspect / 2;
+			camera4.top = 0.5 * frustumSize / 2;
+			camera4.bottom = - 0.5 * frustumSize / 2;
+			camera4.updateProjectionMatrix();
+
+			camera5.left = 0.25 * frustumSize * aspect / - 2;
+			camera5.right = 0.25 * frustumSize * aspect / 2;
+			camera5.top = 0.5 * frustumSize / 2;
+			camera5.bottom = - 0.5 * frustumSize / 2;
+			camera5.updateProjectionMatrix();
+
+		}
+
+		function animate() {
+
+			requestAnimationFrame(animate);
+			render();
+
+		}
+
+		function removeline() {
+			scene.remove(scene.getObjectByName("first"));
+			scene.remove(scene.getObjectByName("sec"));
+			scene.remove(scene.getObjectByName("third"));
+			scene.remove(scene.getObjectByName("fourth"));
+			scene.remove(scene.getObjectByName("hori1line"));
+			scene.remove(scene.getObjectByName("hori2line"));
+			scene.remove(scene.getObjectByName("hori3line"));
+			scene.remove(scene.getObjectByName("ver1line"));
+			scene.remove(scene.getObjectByName("ver2line"));
+			scene.remove(scene.getObjectByName("ver3line"));
+			scene.remove(scene.getObjectByName("ver4line"));
+			scene.remove(scene.getObjectByName("ver5line"));
+			scene.remove(scene.getObjectByName("ver6line"));
+			scene.remove(scene.getObjectByName("ver7line"));
+		}
+
+		function render() {
+			onWindowResize();
+			effect.clear();
+			removeline();
+			var yDis = (mouseDownY - wy) * 0.03;
+			var xDis = -(mouseDownX - wx) * 0.03;
+
+			//第一個角色 左眼為0 右眼為1
+			if (eyestatus == 1 || eyestatus == 2) {
+
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][2];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][3];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera3);
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][4];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][5];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				effect.setViewport(SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera4);
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][6];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][7];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera5);
+
+
+				if (eyestatus == 1) {
+					if (mouseDownFlag == 1) {
+						var temp = modelAngle[modelNum][1];
+						temp += yDis;
+						modelAngle[modelNum][1] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][1];
+						console.log(mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x);
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][1];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][0];
+				}
+
+				if (eyestatus == 2) {
+					if (mouseDownFlag == 1) {
+						var temp = modelAngle[modelNum][0];
+						temp += yDis;
+						modelAngle[modelNum][0] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][0];
+
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][0];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][1];
+				}
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+
+				drawline(modellist);
+				effect.setViewport(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT);
+				effect.render(scene, camera);
+				effect.setViewport(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera2);
+
+			} else if (eyestatus == 3 || eyestatus == 4) {
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][0];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][1];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+				effect.setViewport(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera2);
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][4];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][5];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				effect.setViewport(SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera4);
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][6];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][7];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera5);
+
+				if (eyestatus == 3) {
+					if (mouseDownFlag == 1) {
+						if (yDis > 1) {
+							yDis = 0.1;
+						}
+						var temp = modelAngle[modelNum][3];
+						temp += yDis;
+						modelAngle[modelNum][3] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][3];
+
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][3];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][2];
+				}
+
+				if (eyestatus == 4) {
+					if (mouseDownFlag == 1) {
+						var temp = modelAngle[modelNum][2];
+						temp += yDis;
+						modelAngle[modelNum][2] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][2];
+
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][2];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][3];
+				}
+
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+				drawline(modellist);
+				effect.setViewport(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT);
+				effect.render(scene, camera);
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera3);
+
+			} else if (eyestatus == 5 || eyestatus == 6) {
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][0];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][1];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+				effect.setViewport(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera2);
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][2];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][3];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera3);
+
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][6];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][7];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera5);
+
+
+				if (eyestatus == 5) {
+					if (mouseDownFlag == 1) {
+						var temp = modelAngle[modelNum][5];
+						temp += (xDis);
+						modelAngle[modelNum][5] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][5];
+
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][5];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][4];
+				}
+
+				if (eyestatus == 6) {
+					if (mouseDownFlag == 1) {
+						var temp = modelAngle[modelNum][4];
+						temp += (xDis);
+						modelAngle[modelNum][4] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][4];
+
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][4];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][5];
+				}
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				drawline(modellist);
+				effect.setViewport(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT);
+				effect.render(scene, camera);
+				effect.setViewport(SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera4);
+
+			} else if (eyestatus == 7 || eyestatus == 8) {
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][0];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][1];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+				effect.setViewport(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera2);
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = modelAngle[modelNum][2];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = modelAngle[modelNum][3];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = 0;
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera3);
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][4];
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][5];
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				effect.setViewport(SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera4);
+
+
+				if (eyestatus == 7) {
+					if (mouseDownFlag == 1) {
+						var temp = modelAngle[modelNum][7];
+						temp += (xDis);
+						modelAngle[modelNum][7] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][7];
+
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][7];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][6];
+				}
+
+				if (eyestatus == 8) {
+					if (mouseDownFlag == 1) {
+						var temp = modelAngle[modelNum][6];
+						temp += (xDis);
+						modelAngle[modelNum][6] = temp;
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][6];
+
+					} else {
+						mesh.skeleton.bones[modelEye[modelNum][0]].rotation.y = modelAngle[modelNum][6];
+					}
+					mesh.skeleton.bones[modelEye[modelNum][1]].rotation.y = modelAngle[modelNum][7];
+				}
+
+				mesh.skeleton.bones[modelEye[modelNum][0]].rotation.x = 0;
+				mesh.skeleton.bones[modelEye[modelNum][1]].rotation.x = 0;
+				drawline(modellist);
+				effect.setViewport(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT);
+				effect.render(scene, camera);
+				effect.setViewport(SCREEN_WIDTH / 2 + SCREEN_WIDTH / 4, 0, SCREEN_WIDTH / 4, SCREEN_HEIGHT / 2);
+				effect.render(scene, camera5);
+
+			} else {
+				return;
+			}
+
+		}
+
+	</script>
+
+</body>
+
+</html>
