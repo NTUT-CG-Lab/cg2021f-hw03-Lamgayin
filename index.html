@@ -557,14 +557,14 @@
 								"line_locationy_3": modellist[j][i]['line_locationy_3'],
 								"line_locationx_4": modellist[j][i]['line_locationx_4'],
 								"line_locationy_4": modellist[j][i]['line_locationy_4'],
-								"RXNA": modelAngle[modelNum][0],
-								"LXNA": modelAngle[modelNum][1],
-								"RXPA": modelAngle[modelNum][2],
-								"LXPA": modelAngle[modelNum][3],
-								"RYNA": modelAngle[modelNum][4],
-								"LYNA": modelAngle[modelNum][5],
-								"RYPA": modelAngle[modelNum][6],
-								"LYPA": modelAngle[modelNum][7]
+								"RXNA": modelAngle[modelNum][0]*(180/Math.PI),
+								"LXNA": modelAngle[modelNum][1]*(180/Math.PI),
+								"RXPA": modelAngle[modelNum][2]*(180/Math.PI),
+								"LXPA": modelAngle[modelNum][3]*(180/Math.PI),
+								"RYNA": modelAngle[modelNum][4]*(180/Math.PI),
+								"LYNA": modelAngle[modelNum][5]*(180/Math.PI),
+								"RYPA": modelAngle[modelNum][6]*(180/Math.PI),
+								"LYPA": modelAngle[modelNum][7]*(180/Math.PI)
 							}
 							model.push(md);
 						}
